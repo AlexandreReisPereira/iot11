@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Interface MQTT</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.2.8/mqtt.min.js"></script>
+</head>
+<body>
+  <h1>Dados MQTT</h1>
+  <div>
+    <h2>Valor Analógico:</h2>
+    <div id="valorAnalogico"></div>
+  </div>
+  
+  <div>
+    <h2>Controle de Porta:</h2>
+    <div id="controlePorta"></div>
+  </div>
+
+  <div>
+    <h2>Sinal Status:</h2>
+    <div id="sinalStatus"></div>
+  </div>
+
+  <div>
+    <h2>Texto:</h2>
+    <div id="texto"></div>
+  </div>
+
+  <h2>Enviar Dados</h2>
+  <label for="controlePorta">Controle Porta 1:</label>
+  <input type="text" id="controlePortaInput" placeholder="Digite um valor">
+  <button onclick="enviarControlePorta()">Enviar</button>
+
+  <label for="texto">Texto:</label>
+  <input type="text" id="textoInput" placeholder="Digite um texto">
+  <button onclick="enviarTexto()">Enviar</button>
+
+  <button id="toggleButton" onclick="toggleExibir()">Exibir</button>
+
+  <div id="valoresRecebidos" style="display: none;">
+    <h2>Valores Recebidos</h2>
+    <div id="valorAnalogicoLista"></div>
+  </div>
+
+  <script>
+    const brokerUrl = 'e2da4333cd5642098a39e0eb226ac240.s1.eu.hivemq.cloud';
+    const brokerPort = 8883;
+    const websocketPort = 8884;
+    const clientId = 'web-client-' + Math.random().toString(16).substr(2, 8);
+    const valorAnalogicoTopic = 'ValorAnalogicoA100001';
+    const controlePortaTopic = 'ControlePorta1A100001';
+    const sinalStatusTopic = 'SinalStatusA100001';
+    const textoTopic = 'textoA100001';
+    const username = 'aleubc1';
+    const password = 'Lime4431';
+
+    const client = mqtt.connect(`wss://${brokerUrl}:${websocketPort}/mqtt`, {
+      clientId: clientId,
+      username: username,
+      password: password
+    });
+
+    const valorAnalogicoLista = document.getElementById('valorAnalogicoLista');
+    let historicoExibido = false;
+
+    // Inicialização do IndexedDB
+    const dbName = 'historicoDB';
+    const dbVersion = 1;
+    const objectStoreName = 'historicoValorAnalogico';
+    let db;
+
+    // Função para abrir o IndexedDB
+    function abrirIndexedDB() {
+      const request = indexedDB.open(dbName, dbVersion);
+
+      request.onerror = function(event) {
+        console.error('Erro ao abrir o IndexedDB:', event.target.error);
+      };
+
+      request.onsuccess = function(event) {
+        db = event.target.result;
+      };
+
+      request.onupgradeneeded = function(event) {
+        db = event.target.result;
+
+        if (!db.objectStoreNames.contains(objectStoreName)) {
+          db.createObjectStore(objectStoreName, { autoIncrement: true });
+        }
+      };
+    }
+
+    // Função para salvar valor no IndexedDB
+    function salvarValorAnalogicoIndexedDB(valor) {
+      if (!db) {
+        console.error('IndexedDB não está aberto.');
+        return;
+      }
+
+      const transaction = db.transaction(objectStoreName, 'readwrite');
+      const store = transaction.objectStore(objectStoreName);
+      store.add(valor);
+    }
+
+    // Função para carregar e exibir o histórico do IndexedDB
+    function exibirHistoricoIndexedDB() {
+      if (!db) {
+        console.error('IndexedDB não está aberto.');
+        return;
+      }
+
+      const transaction = db.transaction(objectStoreName, 'readonly');
+      const store = transaction.objectStore(objectStoreName);
+      const request = store.openCursor();
+
+      request.onsuccess = function(event) {
+        const cursor = event.target.result;
+        if (cursor) {
+          adicionarValorAnalogico(cursor.value);
+          cursor.continue();
+        }
+      };
+    }
+
+    client.on('connect', function () {
+      console.log('Conectado ao broker MQTT');
+      client.subscribe(valorAnalogicoTopic);
+      client.subscribe(controlePortaTopic);
+      client.subscribe(sinalStatusTopic);
+      client.subscribe(textoTopic);
+    });
+
+    client.on('message', function (topic, message) {
+      console.log('Mensagem recebida:', message.toString());
+      if (topic === valorAnalogicoTopic) {
+        document.getElementById('valorAnalogico').innerText = message.toString();
+        // Adicionar valor recebido à lista de valores recebidos
+        adicionarValorAnalogico(message.toString());
+        // Salvar o valor no IndexedDB
+        salvarValorAnalogicoIndexedDB(message.toString());
+      } else if (topic === controlePortaTopic) {
+        document.getElementById('controlePorta').innerText = message.toString();
+      } else if (topic === sinalStatusTopic) {
+        document.getElementById('sinalStatus').innerText = message.toString();
+      } else if (topic === textoTopic) {
+        document.getElementById('texto').innerText = message.toString();
+      }
+    });
+
+    function enviarControlePorta() {
+      const valor = document.getElementById('controlePortaInput').value;
+      client.publish(controlePortaTopic, valor);
+    }
+
+    function enviarTexto() {
+      const texto = document.getElementById('textoInput').value;
+      client.publish(textoTopic, texto);
+    }
+
+    function adicionarValorAnalogico(valor) {
+      const valorElement = document.createElement('p');
+      valorElement.innerText = valor;
+      valorAnalogicoLista.appendChild(valorElement);
+    }
+
+    const toggleButton = document.getElementById('toggleButton');
+    let historicoVisivel = false;
+
+    function toggleExibir() {
+      const valoresRecebidos = document.getElementById('valoresRecebidos');
+      if (valoresRecebidos.style.display === 'none') {
+        valoresRecebidos.style.display = 'block';
+        toggleButton.innerText = 'Ocultar';
+        toggleButton.style.backgroundColor = 'red';
+        // Exibir o histórico apenas uma vez
+        if (!historicoExibido) {
+          abrirIndexedDB();
+          exibirHistoricoIndexedDB();
+          historicoExibido = true;
+        }
+      } else {
+        valoresRecebidos.style.display = 'none';
+        toggleButton.innerText = 'Exibir';
+        toggleButton.style.backgroundColor = 'green';
+      }
+    }
+  </script>
+</body>
+</html>
